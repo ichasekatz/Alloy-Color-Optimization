@@ -1,18 +1,17 @@
 # Jeweler-in-the-Loop Paper Figures
 
-This repo reproduces three figures for the paper
+This repo reproduces figures for the paper
 "Jeweler-in-the-Loop: Personalized Alloy Color Optimization via Preference-Based BO"
 (`ring_paper.tex`).
 
 - `color_progress.png` (`pref_gold_optimization.py`): sequence of queried alloys,
   shown as color chips with iteration and final rank annotations. Used in
   `ring_paper.tex` as Figure `\\ref{fig:color_progress}`.
-- `quinary_affine_projection.png` (`plot_quinary_projection.py`): 2D affine
-  projection of the quinary composition simplex, colored by predicted appearance.
-  Used in `ring_paper.tex` as Figure `\\ref{fig:quinary}`.
 - `multiobj_objectives.png` (`multiobjective_ehvi.py`): color-preference rank vs.
   price for queried alloys, with the non-dominated (Pareto) front highlighted.
   Used in `ring_paper.tex` as Figure `\\ref{fig:cost_color_pareto}`.
+- `tournament_progress.png` (`pref_gold_optimization.py`): optional bracket-style
+  visualization of the champion-challenger comparisons.
 
 ## Paper context
 
@@ -29,6 +28,21 @@ source .venv/bin/activate
 pip install numpy pandas matplotlib torch botorch gpytorch linear_operator
 ```
 
+If you prefer conda:
+
+```bash
+conda create -y -n ringopt python=3.11
+conda activate ringopt
+python -m pip install numpy pandas matplotlib torch botorch gpytorch linear_operator
+```
+
+CPU-only runs (avoid CUDA driver warnings):
+
+```bash
+CUDA_VISIBLE_DEVICES= python pref_gold_optimization.py --csv color_quinary_5%.csv --color-plot images/color_progress.png --tournament-plot images/tournament_progress.png
+CUDA_VISIBLE_DEVICES= python multiobjective_ehvi.py --csv color_quinary_5%.csv --plot images/multiobj_objectives.png
+```
+
 ## Data
 
 The scripts expect `color_quinary_5%.csv` in the repo root (already included).
@@ -39,10 +53,8 @@ jitter to prevent direct mapping between compositions and colors.
 
 - `pref_gold_optimization.py` runs single-objective preference-based BO over the
   obfuscated dataset and writes `color_progress.png` to visualize the sampling
-  order and resulting preference ranking.
-- `plot_quinary_projection.py` renders the quinary simplex as a pentagon and
-  writes `quinary_affine_projection.png` with each point colored by its RGB
-  appearance.
+  order and resulting preference ranking. It can also write
+  `tournament_progress.png`.
 - `multiobjective_ehvi.py` runs multi-objective BO balancing color preference and
   price, then writes `multiobj_objectives.png` showing the trade-off and Pareto
   front.
@@ -56,9 +68,7 @@ mkdir -p images
 ```
 
 ```bash
-python pref_gold_optimization.py --csv color_quinary_5%.csv --color-plot images/color_progress.png
-python plot_quinary_projection.py
-mv quinary_affine_projection.png images/quinary_affine_projection.png
+python pref_gold_optimization.py --csv color_quinary_5%.csv --color-plot images/color_progress.png --tournament-plot images/tournament_progress.png
 python multiobjective_ehvi.py --csv color_quinary_5%.csv --plot images/multiobj_objectives.png
 ```
 

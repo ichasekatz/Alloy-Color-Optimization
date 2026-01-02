@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import torch
 from botorch.acquisition.multi_objective.analytic import ExpectedHypervolumeImprovement
+from botorch.exceptions.errors import ModelFittingError
 from botorch.fit import fit_gpytorch_mll
 from botorch.models import ModelListGP, SingleTaskGP
 from botorch.models.pairwise_gp import PairwiseGP, PairwiseLaplaceMarginalLogLikelihood
@@ -217,7 +218,10 @@ def main():
     price_min, price_max = price_all.min().item(), price_all.max().item()
     price_norm_all = (price_all - price_min) / max(price_max - price_min, 1e-8)
     price_gp = SingleTaskGP(compositions, price_norm_all.unsqueeze(-1))
-    fit_gpytorch_mll(ExactMarginalLogLikelihood(price_gp.likelihood, price_gp))
+    try:
+        fit_gpytorch_mll(ExactMarginalLogLikelihood(price_gp.likelihood, price_gp))
+    except ModelFittingError:
+        print("Price GP fit failed; using unoptimized model.")
 
     color_stats = {
         "min": float(train_raw[:, 0].min().item()),
@@ -254,7 +258,10 @@ def main():
             raise RuntimeError("Pairwise GP requires at least one strict preference.")
         color_gp = PairwiseGP(train_x, pref_pairs, jitter=1e-2)
         color_mll = PairwiseLaplaceMarginalLogLikelihood(color_gp.likelihood, color_gp)
-        fit_gpytorch_mll(color_mll)
+        try:
+            fit_gpytorch_mll(color_mll)
+        except ModelFittingError:
+            print(f"[Iter {itr + 1}] Color GP fit failed; using unoptimized model.")
         model = ModelListGP(color_gp, price_gp)
 
         partitioning = FastNondominatedPartitioning(ref_point=ref_point, Y=train_y)

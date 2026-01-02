@@ -349,8 +349,7 @@ def preferential_bo(
         try:
             fit_gpytorch_mll(mll)
         except ModelFittingError:
-            print("failed.")
-            raise
+            print("failed (using unoptimized model).")
         else:
             print("done.")
 
