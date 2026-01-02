@@ -46,8 +46,9 @@ CUDA_VISIBLE_DEVICES= python multiobjective_ehvi.py --csv color_quinary_5%.csv -
 ## Data
 
 The scripts expect `color_quinary_5%.csv` in the repo root (already included).
-Element columns are obfuscated as `E1`-`E5`, and compositions include small
-jitter to prevent direct mapping between compositions and colors.
+Element columns are obfuscated as `E1`-`E5` to comply with Thermo-Calc terms of
+service, and compositions include small jitter to prevent direct mapping between
+compositions and colors.
 
 ## Scripts and outputs
 
