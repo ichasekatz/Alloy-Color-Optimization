@@ -19,7 +19,7 @@ to a user looking for both gold-like color and affordability.
 
 Usage example::
 
-    python multiobjective_qehvi.py --iterations 15 --init-points 5 --seed 0 --plot multiobj.png
+    python multiobjective_ehvi.py --iterations 15 --init-points 5 --seed 0 --plot multiobj.png
 """
 
 import argparse
