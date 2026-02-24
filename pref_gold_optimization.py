@@ -76,7 +76,7 @@ def load_dataset(csv_path):
     ]
     colors = df["24-bit color"].astype(int).values
     color_lookup = dict(zip(keys, colors))
-    return compositions, color_lookup
+    return df, compositions, color_lookup
 
 
 def color_from_composition(comp_tensor, color_map):
@@ -297,6 +297,134 @@ def batched_posterior_mean(model, X, chunk_size=256):
     return torch.cat(means, dim=0)
 
 
+def plot_color_space(
+    output_path,
+    all_rgbs,
+    all_utils,
+    points_rgbs=None,
+    points_utils=None,
+    point_labels=None,
+    title="Channel value vs. gold-likeness",
+):
+    """
+    Makes 3 plots: R vs likeness, G vs likeness, B vs likeness.
+
+    Parameters
+    ----------
+    all_rgbs : array-like, shape (N, 3)
+        All colors in RGB space (either in [0,1] or [0,255]).
+    all_utils : array-like, shape (N,)
+        Likeness score for each color in all_rgbs (e.g., gold_likeness).
+    points_rgbs : array-like, shape (M, 3), optional
+        Highlighted/evaluated RGBs.
+    points_utils : array-like, shape (M,), optional
+        Likeness score for highlighted/evaluated RGBs.
+    point_labels : list-like, optional
+        Labels for highlighted points (e.g., iteration numbers).
+    """
+    all_rgbs = np.asarray(all_rgbs, dtype=float)
+    all_utils = np.asarray(all_utils, dtype=float).reshape(-1)
+
+    if all_rgbs.ndim != 2 or all_rgbs.shape[1] != 3:
+        raise ValueError("all_rgbs must be shape (N, 3).")
+    if all_utils.shape[0] != all_rgbs.shape[0]:
+        raise ValueError("all_utils must have the same length as all_rgbs.")
+
+    # normalize RGB to [0,1] for coloring, but keep channel values for axis
+    axis_rgbs = all_rgbs.copy()
+    if axis_rgbs.max() <= 1.0:
+        colors_rgbs = np.clip(axis_rgbs, 0, 1)
+    else:
+        colors_rgbs = np.clip(axis_rgbs / 255.0, 0, 1)
+
+    if points_rgbs is not None:
+        points_rgbs = np.asarray(points_rgbs, dtype=float)
+        if points_rgbs.ndim != 2 or points_rgbs.shape[1] != 3:
+            raise ValueError("points_rgbs must be shape (M, 3).")
+        if points_rgbs.max() <= 1.0:
+            points_colors = np.clip(points_rgbs, 0, 1)
+        else:
+            points_colors = np.clip(points_rgbs / 255.0, 0, 1)
+
+    if points_utils is not None:
+        points_utils = np.asarray(points_utils, dtype=float).reshape(-1)
+
+    plt.rcParams.update(
+        {
+            "font.family": "serif",
+            "font.serif": ["DejaVu Serif"],
+            "font.size": 11,
+            "axes.titlesize": 12,
+            "axes.labelsize": 11,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+        }
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.3), sharey=True)
+    channels = [("R", 0), ("G", 1), ("B", 2)]
+
+    for ax, (label, idx) in zip(axes, channels):
+        # background: all alloys
+        ax.scatter(
+            axis_rgbs[:, idx],
+            all_utils,
+            c=colors_rgbs,
+            s=10,
+            alpha=0.35,
+            linewidths=0.0,
+            zorder=1,
+        )
+
+        # target color
+        if axis_rgbs.max() <= 1.0:
+            x_star = TARGET_RGB[idx]
+        else:
+            x_star = TARGET_RGB[idx] * 255.0
+
+        y_star = np.max(all_utils)
+
+        ax.scatter(
+            [x_star],
+            [y_star],
+            marker="*",
+            s=100,
+            c=[TARGET_RGB],
+            edgecolors="black",
+            alpha=1.0,
+            linewidths=1.0,
+            zorder=0,
+        )
+
+        # overlay: evaluated points
+        if points_rgbs is not None and points_utils is not None and len(points_rgbs) > 0:
+            ax.scatter(
+                points_rgbs[:, idx],
+                points_utils,
+                c=points_colors,
+                s=50,
+                edgecolors="black",
+                linewidths=0.7,
+                alpha=1.0,
+                zorder=5,
+            )
+
+            if point_labels is not None and len(point_labels) == len(points_rgbs):
+                for x, y, lab in zip(points_rgbs[:, idx], points_utils, point_labels):
+                    ax.text(x, y, str(lab), fontsize=4, ha="center", va="center", zorder=6)
+        
+        ax.set_xlabel(f"{label} value")
+        ax.grid(False)
+        ax.set_title(f"{label} vs likeness")
+
+    axes[0].set_ylabel("Gold-likeness score")
+
+    fig.suptitle(title, y=1.03)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=900, bbox_inches="tight")
+    plt.close(fig)
+
+
 def preferential_bo(
     csv_path,
     iterations,
@@ -306,18 +434,24 @@ def preferential_bo(
     kernel_choice,
     metric,
     tournament_plot,
+    rgb_space_plot,
 ):
     torch.manual_seed(seed)
-    compositions, color_map = load_dataset(csv_path)
+    df, compositions, color_map = load_dataset(csv_path)
 
-    # bootstrap training data with distinct random alloys
+    # cloud of ALL colors in dataset (for filled RGB space)
+    all_color_ints = df["24-bit color"].astype(int).values
+    all_rgbs = np.array([color_int_to_rgb(c) for c in all_color_ints], dtype=float)
+
     init_idx = torch.randperm(len(compositions))[:init_points]
     train_x = compositions[init_idx].clone()
     selected = set(init_idx.tolist())
+
     evaluations = []
     matches = []
+
     util_list = []
-    for comp in train_x:
+    for k, comp in enumerate(train_x, start=1):
         color_int = color_from_composition(comp, color_map)
         util = gold_likeness(color_int, metric=metric)
         util_list.append(util)
@@ -326,9 +460,10 @@ def preferential_bo(
                 "color": color_int,
                 "composition": comp.tolist(),
                 "utility": util,
-                "iteration": len(evaluations) + 1,
+                "iteration": k,  # initial points are iterations 1..init_points
             }
         )
+
     utilities = torch.tensor(util_list, dtype=torch.float32)
     pref_pairs = build_preference_pairs(utilities)
 
@@ -338,13 +473,14 @@ def preferential_bo(
         champion_comp = train_x[best_before_idx]
         champion_color = color_from_composition(champion_comp, color_map)
         champion_util = float(utilities[best_before_idx].item())
+
         if len(pref_pairs) == 0:
             raise RuntimeError("Need at least one strict preference to fit PairwiseGP.")
+
         model = build_pairwise_model(train_x, pref_pairs, kernel_choice)
         mll = PairwiseLaplaceMarginalLogLikelihood(model.likelihood, model)
-        sys.stdout.write(
-            f"[Iter {itr + 1}] Fitting PairwiseGP (train size={len(train_x)})... "
-        )
+
+        sys.stdout.write(f"[Iter {itr + 1}] Fitting PairwiseGP (train size={len(train_x)})... ")
         sys.stdout.flush()
         try:
             fit_gpytorch_mll(mll)
@@ -357,46 +493,49 @@ def preferential_bo(
         mask = torch.zeros(len(compositions), dtype=torch.bool)
         mask[list(selected)] = True
         posterior = posterior.masked_fill(mask, float("-inf"))
+
         next_idx = torch.argmax(posterior).item()
         selected.add(next_idx)
+
         candidate = compositions[next_idx]
         candidate_color = color_from_composition(candidate, color_map)
         true_util = gold_likeness(candidate_color, metric=metric)
 
         train_x = torch.cat([train_x, candidate.unsqueeze(0)], dim=0)
-        utilities = torch.cat(
-            [utilities, torch.tensor([true_util], dtype=torch.float32)], dim=0
-        )
+        utilities = torch.cat([utilities, torch.tensor([true_util], dtype=torch.float32)], dim=0)
         pref_pairs = build_preference_pairs(utilities)
 
         best_idx = torch.argmax(utilities).item()
         best_comp = train_x[best_idx]
-        eval_record = {
-            "color": candidate_color,
-            "composition": candidate.tolist(),
-            "utility": true_util,
-            "iteration": len(evaluations) + 1,
-        }
-        evaluations.append(eval_record)
+
+        evaluations.append(
+            {
+                "color": candidate_color,
+                "composition": candidate.tolist(),
+                "utility": true_util,
+                "iteration": init_points + itr + 1,  # continue numbering
+            }
+        )
+
         matches.append(
             {
                 "iteration": itr + 1,
                 "champion_color": champion_color,
                 "challenger_color": candidate_color,
-                "winner": "challenger"
-                if true_util > champion_util
-                else "champion",
+                "winner": "challenger" if true_util > champion_util else "champion",
             }
         )
+
         history.append(
             {
                 "iteration": itr + 1,
                 "candidate_index": next_idx,
                 "candidate_score": true_util,
-                "best_score": utilities[best_idx].item(),
+                "best_score": float(utilities[best_idx].item()),
                 "best_composition": best_comp.tolist(),
             }
         )
+
         print(
             f"[Iter {itr + 1}] evaluated idx {next_idx} | utility={true_util:.4f} | "
             f"best utility={utilities[best_idx].item():.4f}"
@@ -405,12 +544,29 @@ def preferential_bo(
     best_idx = torch.argmax(utilities).item()
     best_comp = train_x[best_idx]
     print("\nBest alloy found:")
-    print(f"  Composition (Au, Ag, Cu, Pt, Al): {best_comp.tolist()}")
+    print(f"  Composition (E1..E5): {best_comp.tolist()}")
     print(f"  Gold-likeness score: {utilities[best_idx].item():.4f}")
+
     if plot_path:
         plot_color_progress(evaluations, plot_path)
     if tournament_plot:
         plot_tournament(matches, tournament_plot)
+    if rgb_space_plot:
+        all_rgbs = np.array([color_int_to_rgb(c) for c in all_color_ints])
+        all_utils = np.array([gold_likeness(c, metric=metric) for c in all_color_ints])
+        points_rgbs = np.array([color_int_to_rgb(r["color"]) for r in evaluations])
+        points_utils = np.array([gold_likeness(r["color"], metric=metric) for r in evaluations])
+        labels = [r["iteration"] for r in evaluations]
+        plot_color_space(
+            rgb_space_plot,
+            all_rgbs=all_rgbs,
+            all_utils=all_utils,
+            points_rgbs=points_rgbs,
+            points_utils=points_utils,
+            point_labels=labels,
+            title="RGB channel value vs gold-likeness",
+        )
+
     return history
 
 
@@ -418,41 +574,22 @@ def main():
     parser = argparse.ArgumentParser(
         description="Single-objective preferential BO focusing on gold-likeness."
     )
-    parser.add_argument(
-        "--csv",
-        default="color_quinary_5%.csv",
-        help="Dataset with alloy compositions and 24-bit colors.",
-    )
-    parser.add_argument("--iterations", type=int, default=10, help="BO iterations.")
-    parser.add_argument(
-        "--init-points", type=int, default=3, help="Random alloys to warm start with."
-    )
-    parser.add_argument("--seed", type=int, default=0, help="Random seed.")
-    parser.add_argument(
-        "--color-plot",
-        default="color_progress.png",
-        help="Path to save the color progression plot (set empty to skip).",
-    )
-    parser.add_argument(
-        "--kernel",
-        choices=["rbf", "matern32", "matern52"],
-        default="rbf",
-        help="Kernel used inside the PairwiseGP surrogate.",
-    )
-    parser.add_argument(
-        "--metric",
-        choices=["hsv", "rgb"],
-        default="hsv",
-        help="Distance metric for the harmony score inside gold_likeness.",
-    )
-    parser.add_argument(
-        "--tournament-plot",
-        default="tournament_progress.png",
-        help="Path to save a bracket-style visualization (set empty to skip).",
-    )
+    parser.add_argument("--csv", default="color_quinary_5%.csv")
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--init-points", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--color-plot", default="color_progress.png")
+    parser.add_argument("--kernel", choices=["rbf", "matern32", "matern52"], default="rbf")
+    parser.add_argument("--metric", choices=["hsv", "rgb"], default="hsv")
+    parser.add_argument("--tournament-plot", default="tournament_progress.png")
+    parser.add_argument("--rgb-space-plot", default="rgb_projections.png")
+
     args = parser.parse_args()
+
     plot_path = args.color_plot if args.color_plot else None
     tournament_plot = args.tournament_plot if args.tournament_plot else None
+    rgb_space_plot = args.rgb_space_plot if args.rgb_space_plot else None
+
     preferential_bo(
         args.csv,
         args.iterations,
@@ -462,6 +599,7 @@ def main():
         args.kernel,
         args.metric,
         tournament_plot,
+        rgb_space_plot,
     )
 
 

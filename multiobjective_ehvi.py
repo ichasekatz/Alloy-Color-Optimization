@@ -256,6 +256,11 @@ def main():
     for itr in range(args.iterations):
         if pref_pairs.numel() == 0:
             raise RuntimeError("Pairwise GP requires at least one strict preference.")
+        # PairwiseGP (BoTorch) default kernel hyperparameter priors:
+        # - lengthscale ~ Gamma(concentration=2.4, rate=2.7) with constraint > 1e-4
+        # - outputscale ~ SmoothedBoxPrior(a=1e-2, b=1e2) with bounded interval constraint
+        # These defaults are intended for inputs scaled to the unit cube (here: composition fractions in [0, 1]).
+        # See BoTorch PairwiseGP implementation for the exact priors/constraints.
         color_gp = PairwiseGP(train_x, pref_pairs, jitter=1e-2)
         color_mll = PairwiseLaplaceMarginalLogLikelihood(color_gp.likelihood, color_gp)
         try:
